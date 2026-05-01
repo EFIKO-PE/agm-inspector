@@ -1,14 +1,11 @@
 /** @type {import('next').NextConfig} */
 const nextConfig = {
-  output: 'export',
-  images: {
-    unoptimized: true,
-  },
+  // Quitamos 'export' para que Vercel pueda manejar el Login y la IA
   eslint: {
-    ignoreDuringBuilds: true, // Ignoramos errores de estilo para el APK
+    ignoreDuringBuilds: true,
   },
   typescript: {
-    ignoreBuildErrors: true, // Ignoramos errores de tipos para el APK
+    ignoreBuildErrors: true,
   },
 };
 
