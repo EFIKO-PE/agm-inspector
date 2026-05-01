@@ -1,0 +1,23 @@
+// Copyright © 2026 Kenior Oswaldo Ruiz Ramirez
+// Licencia de software propietario. Prohibida la distribución sin permiso explícito.
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+}
+
+model Inspection {
+  id                String   @id @default(cuid())
+  createdAt         DateTime @default(now())
+  imageUrls         String[]
+  diagnosticoPrincipal String
+  severidad         Int
+  accionesInmediatas String[]
+  recomendaciones   Json
+  latitude          Float?
+  longitude         Float?
+  rawResponse       Json?
+}
