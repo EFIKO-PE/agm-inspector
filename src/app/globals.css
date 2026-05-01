@@ -3,41 +3,34 @@
 @tailwind utilities;
 
 :root {
-  --background: #f8fafc;
-  --foreground: #0f172a;
-  --primary: #10b981;
-  --secondary: #064e3b;
-}
-
-@media (prefers-color-scheme: dark) {
-  :root {
-    --background: #020617;
-    --foreground: #f8fafc;
-  }
+  --background: #FDFCF7;
+  --foreground: #2D3A22;
+  --primary: #4A6D32;
+  --primary-light: #6b8c54;
 }
 
 body {
-  color: var(--foreground);
-  background: var(--background);
-  background-image: 
-    radial-gradient(at 0% 0%, hsla(161, 72%, 39%, 0.1) 0px, transparent 50%),
-    radial-gradient(at 100% 100%, hsla(217, 91%, 60%, 0.1) 0px, transparent 50%);
-  min-height: 100vh;
+  color: #2D3A22;
+  background-color: #FDFCF7;
+  font-family: var(--font-outfit), sans-serif;
+  -webkit-font-smoothing: antialiased;
 }
 
 @layer components {
-  .glass {
-    @apply bg-white/70 dark:bg-slate-900/70 backdrop-blur-md border border-white/20 dark:border-slate-800/50;
+  .input-agro {
+    @apply w-full bg-transparent border-b-2 border-slate-200 py-3 px-1 outline-none transition-all duration-300 focus:border-[#4A6D32] text-lg text-slate-800 placeholder-slate-300;
+  }
+  
+  .btn-ingresar {
+    @apply relative overflow-hidden bg-[#4A6D32] text-white font-black py-4 px-14 rounded-full transition-all duration-300 active:scale-95 uppercase tracking-[0.2em] text-[11px] shadow-lg shadow-emerald-900/10 hover:shadow-emerald-900/20 hover:bg-[#3d5a29];
+  }
+
+  .label-agro {
+    @apply text-[10px] font-black uppercase tracking-[0.15em] text-slate-400 mb-1 block;
   }
 }
 
-/* Custom Scrollbar */
-::-webkit-scrollbar {
-  width: 8px;
-}
-::-webkit-scrollbar-track {
-  @apply bg-transparent;
-}
-::-webkit-scrollbar-thumb {
-  @apply bg-emerald-500/20 rounded-full hover:bg-emerald-500/40;
+/* Custom subtle animation for focus */
+input:focus + label {
+  @apply text-primary;
 }

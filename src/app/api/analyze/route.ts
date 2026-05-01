@@ -2,85 +2,178 @@
 // Licencia de software propietario.
 
 import { NextResponse } from "next/server";
-import { prisma } from "@/lib/prisma";
-import OpenAI from "openai";
-
-const openai = new OpenAI({
-  baseURL: "https://openrouter.ai/api/v1",
-  apiKey: process.env.OPENROUTER_API_KEY,
-  defaultHeaders: {
-    "HTTP-Referer": "https://agm-inspector.com", // Optional, for OpenRouter rankings
-    "X-Title": "AGM Inspector", // Optional
-  }
-});
+import { getServerSession } from "next-auth";
+import { authOptions } from "@/lib/authOptions";
+import sql from "@/lib/db";
 
 export async function POST(req: Request) {
   try {
-    const { images, coords } = await req.json();
-
-    if (!images || !Array.isArray(images) || images.length === 0) {
-      return NextResponse.json({ error: "No se proporcionaron imágenes" }, { status: 400 });
+    const session = await getServerSession(authOptions);
+    if (!session?.user?.email) {
+      return NextResponse.json({ error: "No autorizado" }, { status: 401 });
     }
 
-    // Build multimodal messages
-    const imageContent = images.map((base64) => ({
+    // VERIFICACIÓN DE SESIÓN ÚNICA
+    const users = await sql`SELECT "currentSessionId" FROM "User" WHERE email = ${session.user.email}`;
+    const user = users[0];
+    
+    // Extraer sessionId de forma segura
+    const browserSessionId = (session.user as any).sessionId;
+
+    if (!user || !user.currentSessionId || !browserSessionId || user.currentSessionId !== browserSessionId) {
+      return NextResponse.json({ 
+        error: "Sesión cerrada por actividad en otro dispositivo o sesión expirada.",
+        diagnosis: "Por favor, cierra sesión y vuelve a entrar para sincronizar tu acceso."
+      }, { status: 403 });
+    }
+
+    // ACTUALIZAR ACTIVIDAD PARA MANTENER EL BLOQUEO
+    await sql`UPDATE "User" SET "lastActivityAt" = NOW() WHERE email = ${session.user.email}`;
+
+    const { images, location, userApiKey, description, tavilyKey, crop, isDeepAnalysis } = await req.json();
+    const apiKey = userApiKey || process.env.OPENROUTER_API_KEY;
+    const finalTavilyKey = tavilyKey || process.env.TAVILY_API_KEY;
+
+    if (!apiKey) {
+      return NextResponse.json({ 
+        error: "Falta configurar tu API Key de OpenRouter",
+        diagnosis: "Por favor, contacte al administrador para configurar las claves."
+      }, { status: 400 });
+    }
+
+    // Preparar el contenido del mensaje con TODAS las imágenes
+    const imageContents = (images || []).map((imgBase64: string) => ({
       type: "image_url",
-      image_url: { url: base64 }
+      image_url: { url: imgBase64 }
     }));
 
-    const systemPrompt = `Actúa como un experto agrónomo senior especializado en patología vegetal y entomología agrícola. 
-Analiza estas imágenes de cultivos en busca de 'afecciones físicas'.
-Identifica específicamente:
-1. Plagas (ej. Minador de hoja, mosca blanca, pulgones).
-2. Deficiencias nutricionales (Nitrógeno, Magnesio, etc.).
-3. Enfermedades fúngicas o bacterianas (Oidio, Mildiu, Botrytis).
+    // --- MODO ANÁLISIS RÁPIDO (DIRECTO) ---
+    if (!isDeepAnalysis) {
+      const quickRes = await fetch("https://openrouter.ai/api/v1/chat/completions", {
+        method: "POST",
+        headers: {
+          "Authorization": `Bearer ${apiKey}`,
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          model: "nvidia/nemotron-nano-12b-v2-vl:free",
+          messages: [
+            {
+              role: "system",
+              content: `Eres AGM-QUICK-ENGINE. Experto en ${crop}. Diagnóstico visual instantáneo.`
+            },
+            {
+              role: "user",
+              content: [
+                { type: "text", text: `Analiza rápido este cultivo de ${crop}. Notas: ${description}` },
+                ...imageContents
+              ]
+            }
+          ],
+        })
+      });
 
-DEBES responder ÚNICAMENTE en formato JSON estructurado con los siguientes campos:
-{
-  "diagnostico_principal": "Descripción técnica clara del problema",
-  "severidad": número del 1 al 10,
-  "acciones_inmediatas": ["acción 1", "acción 2"],
-  "recomendaciones": {
-    "quimica_o_organica": "Detalle de tratamiento sugerido"
-  }
-}
-Si hay múltiples afecciones, prioriza la más severa.`;
+      if (!quickRes.ok) throw new Error("Error en análisis rápido");
+      const quickData = await quickRes.json();
+      const quickDiagnosis = quickData.choices?.[0]?.message?.content || "No se pudo generar diagnóstico.";
 
-    const response = await openai.chat.completions.create({
-      model: "anthropic/claude-3.5-sonnet", // Or "google/gemini-pro-1.5" or "openai/gpt-4o"
-      messages: [
-        { role: "system", content: systemPrompt },
-        { role: "user", content: [
-          { type: "text", text: "Analiza estas imágenes de la inspección de campo y genera el diagnóstico técnico." },
-          ...imageContent as any
-        ]}
-      ],
-      response_format: { type: "json_object" }
-    });
+      return NextResponse.json({ success: true, diagnosis: quickDiagnosis, is_verified: false });
+    }
 
-    const aiResponse = response.choices[0].message.content;
-    const result = JSON.parse(aiResponse || "{}");
-
-    // Save to database (Prisma)
-    const inspection = await prisma.inspection.create({
-      data: {
-        imageUrls: [], // En un entorno real, subiríamos a Cloudinary/S3 y guardaríamos aquí las URLs
-        diagnosticoPrincipal: result.diagnostico_principal,
-        severidad: result.severidad,
-        accionesInmediatas: result.acciones_inmediatas,
-        recomendaciones: result.recomendaciones,
-        latitude: coords?.lat,
-        longitude: coords?.lng,
-        rawResponse: result as any,
+    // --- MODO ANÁLISIS PROFUNDO (VERIFICADO - 3 PASOS) ---
+    // 1. ANÁLISIS VISUAL INICIAL
+    const initialRes = await fetch("https://openrouter.ai/api/v1/chat/completions", {
+      method: "POST",
+      headers: {
+        "Authorization": `Bearer ${apiKey}`,
+        "Content-Type": "application/json",
       },
+      body: JSON.stringify({
+        model: "nvidia/nemotron-nano-12b-v2-vl:free",
+        messages: [
+          {
+            role: "system",
+            content: `Eres un agrónomo rápido. ID la plaga en ${crop} en 2 palabras.`
+          },
+          {
+            role: "user",
+            content: [
+              { type: "text", text: "ID plaga:" },
+              ...imageContents
+            ]
+          }
+        ],
+      })
+    });
+    
+    if (!initialRes.ok) throw new Error("Error en identificación visual");
+    const initialData = await initialRes.json();
+    const detectedProblem = initialData.choices?.[0]?.message?.content || "Problema desconocido";
+
+    let searchContext = "";
+    let isVerified = false;
+
+    // 2. BÚSQUEDA RÁPIDA
+    if (finalTavilyKey) {
+      try {
+        const tavilyRes = await fetch("https://api.tavily.com/search", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            api_key: finalTavilyKey,
+            query: `compuesto activo real para ${detectedProblem} en ${crop}`,
+            search_depth: "basic",
+            max_results: 2
+          })
+        });
+        if (tavilyRes.ok) {
+          const searchData = await tavilyRes.json();
+          searchContext = searchData.results?.map((r: any) => r.content).join("\n") || "";
+          isVerified = true;
+        }
+      } catch (e) { console.error("Error Tavily:", e); }
+    }
+
+    // 3. DIAGNÓSTICO FINAL
+    const finalRes = await fetch("https://openrouter.ai/api/v1/chat/completions", {
+      method: "POST",
+      headers: {
+        "Authorization": `Bearer ${apiKey}`,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({
+        model: "nvidia/nemotron-nano-12b-v2-vl:free",
+        messages: [
+          {
+            role: "system",
+            content: `Eres AGM-ENGINE. Diagnóstico verificado para ${crop}. 
+            Contexto real: ${searchContext}
+            Usa este formato:
+            DIAGNÓSTICO:
+            RAZÓN:
+            DIFERENCIAL:
+            COMPUESTO ACTIVO:
+            ACCIÓN:`
+          },
+          {
+            role: "user",
+            content: `Reporte final: ${detectedProblem}. Notas: ${description}`
+          }
+        ],
+      })
     });
 
-    return NextResponse.json({ ...result, id: inspection.id });
+    if (!finalRes.ok) throw new Error("Error generando el diagnóstico final");
+    const finalData = await finalRes.json();
+    const diagnosis = finalData.choices?.[0]?.message?.content || "No se pudo generar un diagnóstico verificado.";
+
+    return NextResponse.json({ 
+      success: true, 
+      diagnosis,
+      is_verified: isVerified
+    });
   } catch (error: any) {
-    console.error("Error en API Analyze:", error);
-    return NextResponse.json(
-      { error: "Error procesando el análisis: " + error.message },
-      { status: 500 }
-    );
+    console.error("Error en análisis:", error);
+    return NextResponse.json({ error: "Error de servidor: " + error.message }, { status: 500 });
   }
 }

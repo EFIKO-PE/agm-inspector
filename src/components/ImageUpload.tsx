@@ -3,269 +3,227 @@
 
 "use client";
 
-import React, { useState, useRef, useCallback } from "react";
+import React, { useState, useCallback, useEffect, useRef } from "react";
 import { useDropzone } from "react-dropzone";
-import { Camera, X, RefreshCw, Upload, Loader2, CheckCircle2, AlertTriangle } from "lucide-react";
+import { Camera, X, RefreshCw, Upload, Loader2, CheckCircle2, AlertTriangle, ChevronRight, MapPin, User, LogOut, Settings, Key, Check, Wifi, AlertCircle, MessageSquare, Microscope, Search, Image as ImageIcon, Leaf, Zap, ShieldCheck } from "lucide-react";
 import { motion, AnimatePresence } from "framer-motion";
-import { clsx, type ClassValue } from "clsx";
-import { twMerge } from "tailwind-merge";
-
-function cn(...inputs: ClassValue[]) {
-  return twMerge(clsx(inputs));
-}
-
-interface ImageData {
-  id: string;
-  file: File;
-  preview: string;
-  rotation: number;
-}
+import { signOut } from "next-auth/react";
 
 export default function ImageUpload() {
-  const [images, setImages] = useState<ImageData[]>([]);
+  const [images, setImages] = useState<any[]>([]);
+  const [crop, setCrop] = useState("");
+  const [description, setDescription] = useState("");
+  const [isDeepAnalysis, setIsDeepAnalysis] = useState(false); // Nuevo Switch
   const [isAnalyzing, setIsAnalyzing] = useState(false);
   const [result, setResult] = useState<any>(null);
   const [error, setError] = useState<string | null>(null);
+  const [showModal, setShowModal] = useState(false);
+  const [showActionSheet, setShowActionSheet] = useState(false);
+  
+  const fileInputRef = useRef<HTMLInputElement>(null);
+  const cameraInputRef = useRef<HTMLInputElement>(null);
 
-  const onDrop = useCallback((acceptedFiles: File[]) => {
-    if (images.length + acceptedFiles.length > 3) {
-      setError("Máximo 3 imágenes permitidas");
-      return;
-    }
-
-    const newImages = acceptedFiles.map((file) => ({
-      id: Math.random().toString(36).substring(7),
-      file,
-      preview: URL.createObjectURL(file),
-      rotation: 0,
-    }));
-
-    setImages((prev) => [...prev, ...newImages].slice(0, 3));
-    setError(null);
-  }, [images]);
-
-  const { getRootProps, getInputProps, isDragActive } = useDropzone({
-    onDrop,
-    accept: { "image/*": [] },
-    maxFiles: 3,
-  });
-
-  const removeImage = (id: string) => {
-    setImages((prev) => prev.filter((img) => img.id !== id));
-    if (images.length <= 3) setError(null);
-  };
-
-  const rotateImage = (id: string) => {
-    setImages((prev) =>
-      prev.map((img) =>
-        img.id === id ? { ...img, rotation: (img.rotation + 90) % 360 } : img
-      )
-    );
-  };
-
-  const fileToBase64 = (file: File): Promise<string> => {
-    return new Promise((resolve, reject) => {
+  const compressImage = (file: File): Promise<string> => {
+    return new Promise((resolve) => {
       const reader = new FileReader();
       reader.readAsDataURL(file);
-      reader.onload = () => resolve(reader.result as string);
-      reader.onerror = (error) => reject(error);
+      reader.onload = (event) => {
+        const img = new Image();
+        img.src = event.target?.result as string;
+        img.onload = () => {
+          const canvas = document.createElement("canvas");
+          const MAX_WIDTH = 800;
+          const MAX_HEIGHT = 800;
+          let width = img.width;
+          let height = img.height;
+          if (width > height) {
+            if (width > MAX_WIDTH) { height *= MAX_WIDTH / width; width = MAX_WIDTH; }
+          } else {
+            if (height > MAX_HEIGHT) { width *= MAX_HEIGHT / height; height = MAX_HEIGHT; }
+          }
+          canvas.width = width; canvas.height = height;
+          const ctx = canvas.getContext("2d");
+          ctx?.drawImage(img, 0, 0, width, height);
+          resolve(canvas.toDataURL("image/jpeg", 0.7));
+        };
+      };
     });
   };
 
+  const handleFileSelect = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const files = e.target.files;
+    if (!files || files.length === 0) return;
+    if (images.length + files.length > 2) {
+      setError("Máximo 2 imágenes para optimizar velocidad");
+      return;
+    }
+    const newImages = await Promise.all(
+      Array.from(files).map(async (file) => {
+        const compressedBase64 = await compressImage(file);
+        return {
+          id: Math.random().toString(36).substring(7),
+          file,
+          preview: URL.createObjectURL(file),
+          base64: compressedBase64
+        };
+      })
+    );
+    setImages(prev => [...prev, ...newImages]);
+    setShowActionSheet(false);
+    setError(null);
+  };
+
   const handleAnalyze = async () => {
-    if (images.length === 0) return;
+    if (images.length === 0) { setError("Capture una muestra primero"); return; }
+    if (!crop) { setError("Escriba el nombre del cultivo"); return; }
+    
     setIsAnalyzing(true);
     setResult(null);
     setError(null);
-
     try {
-      const base64Images = await Promise.all(images.map((img) => fileToBase64(img.file)));
-      
-      // Get current GPS position
-      const position = await new Promise<GeolocationPosition>((resolve, reject) => {
-        navigator.geolocation.getCurrentPosition(resolve, reject);
-      }).catch(() => null);
-
       const response = await fetch("/api/analyze", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          images: base64Images,
-          coords: position ? {
-            lat: position.coords.latitude,
-            lng: position.coords.longitude
-          } : null
+        body: JSON.stringify({ 
+          images: images.map(img => img.base64),
+          crop: crop,
+          description: description,
+          isDeepAnalysis: isDeepAnalysis, // Enviamos el modo
+          location: { lat: -12.0464, lng: -77.0428 }
         }),
       });
-
       const data = await response.json();
-      if (!response.ok) throw new Error(data.error || "Error en el análisis");
-      
-      setResult(data);
-    } catch (err: any) {
-      setError(err.message || "Ocurrió un error inesperado");
-    } finally {
-      setIsAnalyzing(false);
-    }
+      if (data.error) { setError(data.error); } 
+      else { setResult(data); setShowModal(true); }
+    } catch (err) { setError("Error de conexión"); } 
+    finally { setIsAnalyzing(false); }
   };
 
   return (
-    <div className="w-full max-w-2xl mx-auto p-4 space-y-6">
-      <div className="text-center space-y-2">
-        <h2 className="text-2xl font-bold text-emerald-800 dark:text-emerald-400">
-          AGM Inspector
-        </h2>
-        <p className="text-sm text-slate-600 dark:text-slate-400">
-          Captura hasta 3 fotos para un diagnóstico técnico agrícola
-        </p>
-      </div>
-
-      <div
-        {...getRootProps()}
-        className={cn(
-          "relative border-2 border-dashed rounded-3xl p-8 transition-all duration-300 ease-in-out cursor-pointer",
-          "flex flex-col items-center justify-center space-y-4 min-h-[200px]",
-          isDragActive 
-            ? "border-emerald-500 bg-emerald-50 dark:bg-emerald-950/20 scale-[1.02]" 
-            : "border-slate-300 dark:border-slate-700 hover:border-emerald-400 bg-white dark:bg-slate-900",
-          images.length >= 3 && "opacity-50 cursor-not-allowed pointer-events-none"
-        )}
-      >
-        <input {...getInputProps()} capture="environment" />
-        <div className="bg-emerald-100 dark:bg-emerald-900/40 p-4 rounded-full">
-          <Camera className="w-8 h-8 text-emerald-600" />
+    <div className="w-full max-w-[400px] mx-auto min-h-screen bg-[#FDFCF7] flex flex-col font-outfit pb-10 relative overflow-x-hidden">
+      <div className="absolute inset-0 opacity-[0.03] pointer-events-none" style={{ backgroundImage: 'radial-gradient(#4A6D32 1px, transparent 1px)', backgroundSize: '20px 20px' }} />
+      
+      <header className="px-6 py-6 flex items-center justify-between border-b border-slate-100 bg-white sticky top-0 z-20 shadow-sm">
+        <img src="/logo.png" alt="Logo" className="h-10 w-auto object-contain" />
+        <div className="flex items-center gap-4">
+          <div className="text-right">
+            <p className="text-[10px] font-black text-slate-400 uppercase tracking-tighter">Inspector</p>
+            <p className="text-xs font-black text-primary">EN CAMPO</p>
+          </div>
+          <button onClick={() => signOut()} className="p-2 bg-slate-50 rounded-xl text-slate-300 active:text-red-400 transition-colors"><LogOut size={18} /></button>
         </div>
-        <div className="text-center">
-          <p className="font-semibold text-slate-700 dark:text-slate-200">
-            {isDragActive ? "Suelta las fotos aquí" : "Toca para usar la cámara o arrastra fotos"}
-          </p>
-          <p className="text-xs text-slate-500 mt-1">
-            Formatos aceptados: JPG, PNG • Max 3 fotos
-          </p>
-        </div>
-      </div>
+      </header>
 
-      {error && (
-        <motion.div 
-          initial={{ opacity: 0, y: -10 }} 
-          animate={{ opacity: 1, y: 0 }}
-          className="bg-red-50 dark:bg-red-950/20 border border-red-200 dark:border-red-800 p-4 rounded-xl flex items-center gap-3 text-red-700 dark:text-red-400"
+      {/* Hidden Inputs */}
+      <input type="file" ref={fileInputRef} className="hidden" accept="image/*" multiple onChange={handleFileSelect} />
+      <input type="file" ref={cameraInputRef} className="hidden" accept="image/*" capture="environment" onChange={handleFileSelect} />
+
+      <main className="flex-1 px-6 py-8 space-y-8">
+        <div 
+          onClick={() => setShowActionSheet(true)}
+          className={`w-full h-32 rounded-[2.5rem] flex flex-row items-center justify-center space-x-6 transition-all cursor-pointer px-8 active:scale-95 ${
+            isDeepAnalysis 
+            ? "bg-gradient-to-br from-[#4A6D32] to-[#2D4A1E] shadow-[0_20px_40px_-10px_rgba(74,109,50,0.3)]" 
+            : "bg-gradient-to-br from-[#F37021] to-[#D65A10] shadow-[0_20px_40px_-10px_rgba(243,112,33,0.3)]"
+          }`}
         >
-          <AlertTriangle className="w-5 h-5 flex-shrink-0" />
-          <p className="text-sm font-medium">{error}</p>
-        </motion.div>
-      )}
+          <div className="w-16 h-16 bg-white/10 backdrop-blur-md rounded-2xl flex items-center justify-center border border-white/20"><Camera className="w-7 h-7 text-white" /></div>
+          <div className="text-left"><h3 className="text-lg font-black text-white leading-tight">Capturar<br/>Muestra</h3><div className="flex items-center gap-2 mt-1"><div className="w-1.5 h-1.5 rounded-full bg-[#F37021] animate-pulse" /><p className="text-[9px] text-white/60 uppercase font-black tracking-widest">Toque para iniciar</p></div></div>
+        </div>
 
-      <div className="grid grid-cols-3 gap-4">
-        <AnimatePresence>
-          {images.map((img) => (
-            <motion.div
-              key={img.id}
-              layout
-              initial={{ opacity: 0, scale: 0.8 }}
-              animate={{ opacity: 1, scale: 1 }}
-              exit={{ opacity: 0, scale: 0.8 }}
-              className="relative aspect-square rounded-2xl overflow-hidden shadow-lg border border-slate-200 dark:border-slate-800"
-            >
-              <img
-                src={img.preview}
-                alt="Preview"
-                className="w-full h-full object-cover transition-transform duration-300"
-                style={{ transform: `rotate(${img.rotation}deg)` }}
-              />
-              <div className="absolute top-1 right-1 flex flex-col gap-1">
-                <button
-                  onClick={() => removeImage(img.id)}
-                  className="bg-white/90 dark:bg-black/80 p-1.5 rounded-full text-red-500 hover:bg-white dark:hover:bg-black"
-                >
-                  <X className="w-4 h-4" />
+        {/* MODOS DE ANÁLISIS (SWITCH) */}
+        <div className="bg-white border border-slate-100 rounded-3xl p-2 flex gap-1 shadow-sm">
+          <button 
+            onClick={() => setIsDeepAnalysis(false)}
+            className={`flex-1 py-3 rounded-2xl flex items-center justify-center gap-2 transition-all ${!isDeepAnalysis ? 'bg-[#F37021] text-white shadow-md' : 'text-slate-400'}`}
+          >
+            <Zap size={14} fill={!isDeepAnalysis ? "currentColor" : "none"} />
+            <span className="text-[10px] font-black uppercase tracking-widest">Análisis Rápido</span>
+          </button>
+          <button 
+            onClick={() => setIsDeepAnalysis(true)}
+            className={`flex-1 py-3 rounded-2xl flex items-center justify-center gap-2 transition-all ${isDeepAnalysis ? 'bg-primary text-white shadow-md' : 'text-slate-400'}`}
+          >
+            <ShieldCheck size={14} fill={isDeepAnalysis ? "currentColor" : "none"} />
+            <span className="text-[10px] font-black uppercase tracking-widest">Análisis Profundo</span>
+          </button>
+        </div>
+
+        <div className="space-y-6">
+          <div className="space-y-3">
+            <div className="flex items-center gap-2 text-slate-400"><Leaf size={14} className="text-primary" /><span className="text-[10px] font-black uppercase tracking-widest">Tipo de Cultivo</span></div>
+            <input type="text" value={crop} onChange={(e) => setCrop(e.target.value)} placeholder="Ej: Vid, Palto, Maíz..." className="w-full bg-white border border-slate-100 rounded-2xl p-5 text-sm font-black text-slate-700 outline-none focus:border-primary shadow-sm" />
+          </div>
+
+          <div className="space-y-3">
+            <div className="flex items-center gap-2 text-slate-400"><MessageSquare size={14} /><span className="text-[10px] font-black uppercase tracking-widest">Notas del Inspector</span></div>
+            <textarea value={description} onChange={(e) => setDescription(e.target.value)} placeholder="Ej: Se ven manchas amarillas..." className="w-full bg-white border border-slate-100 rounded-2xl p-5 text-sm font-medium outline-none focus:border-primary shadow-sm h-24 resize-none" />
+          </div>
+
+          {images.length > 0 && (
+            <div className="grid grid-cols-2 gap-4 pb-2">
+              {images.map((img) => (
+                <div key={img.id} className="relative aspect-square rounded-2xl overflow-hidden border border-slate-100 shadow-sm">
+                  <img src={img.preview} className="w-full h-full object-cover" />
+                  <button onClick={() => setImages(images.filter(i => i.id !== img.id))} className="absolute top-1 right-1 bg-white/80 p-1.5 rounded-full text-red-500 shadow-sm"><X size={12} /></button>
+                </div>
+              ))}
+            </div>
+          )}
+
+          <button onClick={handleAnalyze} disabled={images.length === 0 || isAnalyzing} className={`w-full flex items-center justify-center gap-3 py-6 rounded-3xl font-black text-white uppercase tracking-widest shadow-xl active:scale-95 transition-all disabled:opacity-50 ${isDeepAnalysis ? 'bg-primary' : 'bg-[#F37021]'}`}>
+            {isAnalyzing ? <Loader2 className="animate-spin" size={20} /> : <><RefreshCw size={18} strokeWidth={2.5} /> <span>{isDeepAnalysis ? "Análisis Profundo" : "Análisis Rápido"}</span></>}
+          </button>
+          
+          {error && <p className="text-center text-[10px] font-black text-red-500 uppercase tracking-widest bg-red-50 py-3 rounded-xl">{error}</p>}
+        </div>
+      </main>
+
+      {/* Action Sheet */}
+      <AnimatePresence>
+        {showActionSheet && (
+          <>
+            <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} onClick={() => setShowActionSheet(false)} className="fixed inset-0 bg-black/40 backdrop-blur-[2px] z-[60]" />
+            <motion.div initial={{ y: "100%" }} animate={{ y: 0 }} exit={{ y: "100%" }} className="fixed bottom-0 left-0 right-0 max-w-[400px] mx-auto bg-white rounded-t-[2.5rem] z-[70] p-8 pb-16 shadow-[0_-20px_40px_rgba(0,0,0,0.1)]">
+              <div className="w-12 h-1.5 bg-slate-100 rounded-full mx-auto mb-8" />
+              <div className="space-y-3">
+                <button onClick={() => cameraInputRef.current?.click()} className="w-full flex items-center gap-4 p-5 bg-gradient-to-r from-[#4A6D32] to-[#2D4A1E] rounded-2xl shadow-lg active:scale-95 transition-all group">
+                  <div className="w-12 h-12 bg-white/10 backdrop-blur-md rounded-xl flex items-center justify-center border border-white/20 text-white"><Camera size={24} strokeWidth={1.5} /></div>
+                  <div className="text-left"><p className="text-sm font-black text-white">Usar Cámara</p><p className="text-[10px] font-medium text-white/60">Capturar muestra en tiempo real</p></div>
                 </button>
-                <button
-                  onClick={() => rotateImage(img.id)}
-                  className="bg-white/90 dark:bg-black/80 p-1.5 rounded-full text-emerald-600 hover:bg-white dark:hover:bg-black"
-                >
-                  <RefreshCw className="w-4 h-4" />
+                <button onClick={() => fileInputRef.current?.click()} className="w-full flex items-center gap-4 p-5 bg-gradient-to-r from-[#4A6D32] to-[#2D4A1E] rounded-2xl shadow-lg active:scale-95 transition-all group">
+                  <div className="w-12 h-12 bg-white/10 backdrop-blur-md rounded-xl flex items-center justify-center border border-white/20 text-white"><ImageIcon size={24} strokeWidth={1.5} /></div>
+                  <div className="text-left"><p className="text-sm font-black text-white">Cargar desde Galería</p><p className="text-[10px] font-medium text-white/60">Buscar en almacenamiento local</p></div>
                 </button>
               </div>
+              <button onClick={() => setShowActionSheet(false)} className="w-full mt-6 py-4 text-[11px] font-black uppercase tracking-[0.2em] text-slate-400">Cerrar Menú</button>
             </motion.div>
-          ))}
-        </AnimatePresence>
-      </div>
-
-      <button
-        onClick={handleAnalyze}
-        disabled={images.length === 0 || isAnalyzing}
-        className={cn(
-          "w-full py-4 rounded-2xl font-bold text-lg transition-all flex items-center justify-center gap-2 shadow-xl",
-          images.length > 0 && !isAnalyzing
-            ? "bg-emerald-600 text-white hover:bg-emerald-700 active:scale-95"
-            : "bg-slate-200 dark:bg-slate-800 text-slate-400 cursor-not-allowed"
-        )}
-      >
-        {isAnalyzing ? (
-          <>
-            <Loader2 className="w-6 h-6 animate-spin" />
-            Analizando con IA...
-          </>
-        ) : (
-          <>
-            <Upload className="w-6 h-6" />
-            Iniciar Inspección
           </>
         )}
-      </button>
+      </AnimatePresence>
 
-      {result && (
-        <motion.div
-          initial={{ opacity: 0, y: 20 }}
-          animate={{ opacity: 1, y: 0 }}
-          className="bg-white dark:bg-slate-900 border border-emerald-200 dark:border-emerald-800 p-6 rounded-3xl shadow-2xl space-y-4"
-        >
-          <div className="flex items-center justify-between">
-            <h3 className="text-xl font-bold text-emerald-800 dark:text-emerald-400 flex items-center gap-2">
-              <CheckCircle2 className="w-6 h-6 text-emerald-600" />
-              Resultado del Diagnóstico
-            </h3>
-            <span className={cn(
-              "px-3 py-1 rounded-full text-sm font-bold",
-              result.severidad > 7 ? "bg-red-100 text-red-700" : 
-              result.severidad > 4 ? "bg-amber-100 text-amber-700" : "bg-emerald-100 text-emerald-700"
-            )}>
-              Severidad: {result.severidad}/10
-            </span>
-          </div>
-          
-          <div className="space-y-4">
-            <div>
-              <p className="text-xs uppercase font-bold text-slate-500 tracking-wider">Diagnóstico Principal</p>
-              <p className="text-lg text-slate-800 dark:text-slate-200">{result.diagnostico_principal}</p>
-            </div>
-            
-            <div>
-              <p className="text-xs uppercase font-bold text-slate-500 tracking-wider">Acciones Inmediatas</p>
-              <ul className="list-disc list-inside text-sm text-slate-700 dark:text-slate-300 mt-1">
-                {result.acciones_inmediatas.map((action: string, i: number) => (
-                  <li key={i}>{action}</li>
-                ))}
-              </ul>
-            </div>
-
-            <div className="bg-emerald-50 dark:bg-emerald-950/20 p-4 rounded-2xl border border-emerald-100 dark:border-emerald-900">
-              <p className="text-xs uppercase font-bold text-emerald-700 dark:text-emerald-500 tracking-wider">Recomendación</p>
-              <p className="text-sm text-slate-800 dark:text-slate-200 mt-1">
-                {result.recomendaciones.quimica_o_organica}
-              </p>
-            </div>
-          </div>
-        </motion.div>
-      )}
-      
-      <footer className="text-center pt-8 opacity-50">
-        <p className="text-[10px] text-slate-500">
-          Copyright © 2026 Kenior Oswaldo Ruiz Ramirez<br/>
-          Huaral, Perú • AGM Inspector v1.0
-        </p>
-      </footer>
+      <AnimatePresence>
+        {showModal && result && (
+          <>
+            <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} onClick={() => setShowModal(false)} className="fixed inset-0 bg-black/60 backdrop-blur-sm z-[80]" />
+            <motion.div initial={{ y: "100%" }} animate={{ y: 0 }} exit={{ y: "100%" }} className="fixed bottom-0 left-0 right-0 max-w-[400px] mx-auto bg-[#FDFCF7] rounded-t-[3rem] z-[90] shadow-2xl overflow-hidden flex flex-col max-h-[85vh]">
+              <div className="w-12 h-1.5 bg-slate-200 rounded-full mx-auto mt-4 mb-2" />
+              <div className="overflow-y-auto px-8 pb-16 pt-4 space-y-8">
+                <div className="flex items-center justify-between border-b border-slate-100 pb-4">
+                  <div className="flex items-center gap-3">
+                    <div className="w-10 h-10 bg-emerald-100 rounded-full flex items-center justify-center text-primary"><Microscope size={20} /></div>
+                    <div><h4 className="text-[10px] font-black uppercase tracking-widest text-slate-400">Análisis {result.is_verified ? 'Verificado' : 'Rápido'}</h4><p className="text-xs font-black text-primary">AGM ENGINE</p></div>
+                  </div>
+                  {result.is_verified && <div className="flex items-center gap-1 bg-emerald-50 px-2 py-1 rounded-full"><CheckCircle2 size={10} className="text-emerald-500" /><span className="text-[8px] font-black text-emerald-500 uppercase">Verificado</span></div>}
+                </div>
+                <div className="bg-[#2D4A1E] rounded-[2rem] p-8 text-white shadow-xl space-y-6"><div className="font-mono text-xs leading-relaxed whitespace-pre-wrap">{result.diagnosis}</div></div>
+                <button onClick={() => setShowModal(false)} className="w-full bg-primary text-white py-5 rounded-2xl font-black text-xs uppercase tracking-widest shadow-lg active:scale-95 transition-all">Cerrar Reporte</button>
+              </div>
+            </motion.div>
+          </>
+        )}
+      </AnimatePresence>
+      <footer className="py-10 text-center opacity-30"><p className="text-[8px] font-black uppercase tracking-[0.4em]">AGM Inspector • 2026</p></footer>
     </div>
   );
 }
