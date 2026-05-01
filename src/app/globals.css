@@ -9,11 +9,16 @@
   --primary-light: #6b8c54;
 }
 
+html {
+  background-color: #FDFCF7;
+}
+
 body {
   color: #2D3A22;
   background-color: #FDFCF7;
   font-family: var(--font-outfit), sans-serif;
   -webkit-font-smoothing: antialiased;
+  overscroll-behavior-y: none; /* Evita que se vea el fondo negro al deslizar de más */
 }
 
 @layer components {
