@@ -1,7 +1,7 @@
 // Copyright © 2026 Kenior Oswaldo Ruiz Ramirez
 import { NextAuthOptions } from "next-auth";
 import CredentialsProvider from "next-auth/providers/credentials";
-import bcrypt from "bcrypt";
+import bcrypt from "bcryptjs";
 import sql from "@/lib/db";
 import { randomUUID } from "crypto";
 
