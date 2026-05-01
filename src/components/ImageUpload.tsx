@@ -128,7 +128,7 @@ export default function ImageUpload() {
           }`}
         >
           <div className="w-16 h-16 bg-white/10 backdrop-blur-md rounded-2xl flex items-center justify-center border border-white/20"><Camera className="w-7 h-7 text-white" /></div>
-          <div className="text-left"><h3 className="text-lg font-black text-white leading-tight">Capturar<br/>Muestra</h3><div className="flex items-center gap-2 mt-1"><div className="w-1.5 h-1.5 rounded-full bg-[#F37021] animate-pulse" /><p className="text-[9px] text-white/60 uppercase font-black tracking-widest">Toque para iniciar</p></div></div>
+          <div className="text-left"><h3 className="text-lg font-black text-white leading-tight">Capturar<br/>Muestra</h3><div className="flex items-center gap-2 mt-1"><div className={`w-1.5 h-1.5 rounded-full animate-pulse ${isDeepAnalysis ? 'bg-[#F37021]' : 'bg-white'}`} /><p className="text-[9px] text-white/60 uppercase font-black tracking-widest">Toque para iniciar</p></div></div>
         </div>
 
         {/* MODOS DE ANÁLISIS (SWITCH) */}
