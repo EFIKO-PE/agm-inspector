@@ -138,14 +138,14 @@ export default function ImageUpload() {
             className={`flex-1 py-3 rounded-2xl flex items-center justify-center gap-2 transition-all ${!isDeepAnalysis ? 'bg-[#F37021] text-white shadow-md' : 'text-slate-400'}`}
           >
             <Zap size={14} fill={!isDeepAnalysis ? "currentColor" : "none"} />
-            <span className="text-[10px] font-black uppercase tracking-widest">Análisis Simple</span>
+            <span className="text-[10px] font-black uppercase tracking-widest">Simple</span>
           </button>
           <button 
             onClick={() => setIsDeepAnalysis(true)}
             className={`flex-1 py-3 rounded-2xl flex items-center justify-center gap-2 transition-all ${isDeepAnalysis ? 'bg-primary text-white shadow-md' : 'text-slate-400'}`}
           >
             <ShieldCheck size={14} fill={isDeepAnalysis ? "currentColor" : "none"} />
-            <span className="text-[10px] font-black uppercase tracking-widest">Análisis Avanzado</span>
+            <span className="text-[10px] font-black uppercase tracking-widest">Avanzado</span>
           </button>
         </div>
 
