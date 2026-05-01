@@ -9,16 +9,21 @@
   --primary-light: #6b8c54;
 }
 
-html {
-  background-color: #FDFCF7;
-}
-
-body {
+/* Forzamos el fondo crema en TODO el sitio, sin excepciones */
+html, body {
+  background-color: #FDFCF7 !important;
   color: #2D3A22;
-  background-color: #FDFCF7;
   font-family: var(--font-outfit), sans-serif;
   -webkit-font-smoothing: antialiased;
-  overscroll-behavior-y: none; /* Evita que se vea el fondo negro al deslizar de más */
+  overscroll-behavior-y: none;
+  margin: 0;
+  padding: 0;
+  min-height: 100vh;
+}
+
+/* Aseguramos que los "lados" en PC también sean crema */
+#__next, main {
+  background-color: #FDFCF7 !important;
 }
 
 @layer components {
@@ -33,9 +38,4 @@ body {
   .label-agro {
     @apply text-[10px] font-black uppercase tracking-[0.15em] text-slate-400 mb-1 block;
   }
-}
-
-/* Custom subtle animation for focus */
-input:focus + label {
-  @apply text-primary;
 }
